@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hanging Card — Replica</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+
+  /* shared metal grain (inline SVG noise — no network) */
+  :root {
+    --grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='64' height='64' filter='url(%23n)' opacity='0.55'/></svg>");
+    /* brushed-steel spec bands */
+    --steel: conic-gradient(from 20deg,
+      #f7f9fc 0deg, #a9aeb7 28deg, #e9ecf1 58deg, #878c95 95deg,
+      #e2e5eb 132deg, #9498a1 172deg, #f1f3f7 208deg, #7e838c 248deg,
+      #d7dae1 288deg, #9aa0a8 330deg, #f7f9fc 360deg);
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background:#0b0b0d;
+    color:#fff;
+    overflow:hidden;
+    -webkit-user-select:none; user-select:none;
+  }
+
+  /* ---------- Title band ---------- */
+  .title-band {
+    position:relative;
+    height:150px;
+    background:#0b0b0d;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    z-index:5;
+  }
+  .title-band h1 { font-size:44px; font-weight:800; letter-spacing:-1px; line-height:1; text-align:center; }
+  .title-band h1 span { color:#ff7a1a; }
+
+  /* ---------- Stage ---------- */
+  .stage {
+    position:relative;
+    height:calc(100vh - 150px - 64px);
+    min-height:380px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #f4f5f7 55%, #e9eaee 100%);
+    overflow:hidden;
+    cursor:grab;
+    touch-action:none;
+  }
+  .stage.dragging { cursor:grabbing; }
+  .stage::before { /* thin top rail the clip hangs from */
+    content:"";
+    position:absolute; top:0; left:0; right:0; height:6px;
+    background:linear-gradient(180deg,#3a3d45,#111216);
+    box-shadow:0 2px 6px rgba(0,0,0,.35);
+    z-index:4;
+  }
+  /* plain text hint — koi background box nahi */
+  .tap-hint {
+    position:absolute; bottom:16px; left:50%; transform:translate(-50%, 6px);
+    z-index:8; pointer-events:none;
+    font:500 13px/1 'Inter',system-ui,sans-serif;
+    color:#6c7079; letter-spacing:.02em;
+    text-shadow:0 1px 0 rgba(255,255,255,.6);
+    opacity:0; transition:opacity .45s, transform .45s;
+  }
+  .tap-hint.show { opacity:1; transform:translate(-50%, 0); }
+  /* iOS shake permission button — sirf zarurat par dikhta hai */
+  .btn-motion {
+    position:absolute; bottom:14px; left:50%; transform:translate(-50%, 10px);
+    z-index:9; display:none; align-items:center; gap:8px;
+    font:600 12.5px/1 'Inter',system-ui,sans-serif; color:#fff;
+    background:#17181c; border:1px solid rgba(255,255,255,.14);
+    border-radius:999px; padding:11px 18px; cursor:pointer;
+    box-shadow:0 10px 26px rgba(0,0,0,.28);
+    opacity:0; transition:opacity .3s, transform .3s;
+  }
+  .btn-motion.show { display:flex; opacity:1; transform:translate(-50%, 0); }
+  .btn-motion.ok { background:#0f6b45; }
+
+
+  /* ---------- Rig ----------
+     anchor (clip) : rail par fixed
+     rope (SVG)    : verlet thread — bend/stretch/lag karta hai
+     hang          : rope ke end se card latakta hai (angle a2)
+  ------------------------------------ */
+  .pivot {
+    position:absolute;
+    top:-6px;
+    left:50%;
+    width:0; height:0;
+    z-index:3;
+  }
+  .anchor {                 /* clip: rail par fixed, rotate nahi karta */
+    position:absolute;
+    top:0; left:0;
+    transform:translateX(-50%);
+  }
+
+  .clip {
+    position:relative;
+    width:26px; height:74px;
+    /* dark anodized brushed metal: grain + vertical brush + spec bands + seam */
+    background-image:
+      var(--grain),
+      repeating-linear-gradient(90deg, rgba(255,255,255,.07) 0 1px, rgba(0,0,0,.14) 1px 2px, transparent 2px 4px),
+      linear-gradient(180deg, transparent 46%, rgba(0,0,0,.55) 48.5%, rgba(255,255,255,.12) 51%, transparent 54%),
+      linear-gradient(90deg, #050608 0%, #1b1d22 16%, #3a3d45 38%, #4b4f58 50%, #2a2c33 64%, #121317 84%, #050608 100%);
+    background-blend-mode: overlay, normal, normal, normal;
+    background-size:64px 64px, auto, auto, auto;
+    border-radius:5px 5px 4px 4px;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.22),
+      inset 1px 0 0 rgba(255,255,255,.08),
+      inset -1px 0 0 rgba(0,0,0,.5),
+      inset 0 -2px 4px rgba(0,0,0,.6),
+      0 10px 18px rgba(0,0,0,.45),
+      0 3px 6px rgba(0,0,0,.4);
+    display:flex; align-items:center; justify-content:center;
+    overflow:visible;
+  }
+  .clip::before { /* metal mouth at top — bright brushed steel */
+    content:"";
+    position:absolute; top:-5px; left:50%; transform:translateX(-50%);
+    width:36px; height:9px; border-radius:5px;
+    background-image:
+      var(--grain),
+      repeating-linear-gradient(0deg, rgba(255,255,255,.30) 0 1px, rgba(0,0,0,.10) 1px 2px, transparent 2px 3px),
+      linear-gradient(180deg,#ffffff 0%,#dfe3e9 26%,#9196a0 52%,#d2d6dd 74%,#666b74 100%);
+    background-blend-mode: overlay, normal, normal;
+    box-shadow:0 3px 5px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.9);
+  }
+  .clip::after { /* screw rivets (do stacked) */
+    content:"";
+    position:absolute; right:5px; top:50%;
+    width:7px; height:7px; border-radius:50%;
+    transform:translateY(-50%);
+    background:radial-gradient(circle at 34% 30%, #f4f6f9 0%, #aeb3bc 45%, #5f646d 78%, #3c4048 100%);
+    box-shadow:
+      inset 0 -1px 1px rgba(0,0,0,.55),
+      0 1px 1px rgba(255,255,255,.2),
+      0 0 0 1px rgba(0,0,0,.45),
+      0 -17px 0 -0.5px #7f848d,
+      0 17px 0 -0.5px #7f848d;
+  }
+  .clip-text {
+    writing-mode:vertical-rl; transform:rotate(180deg);
+    font-size:6.5px; letter-spacing:.22em; color:#9ba0ab;
+    text-transform:uppercase; white-space:nowrap;
+    text-shadow:0 1px 0 rgba(0,0,0,.6);
+    position:relative; z-index:1;
+    margin-right:6px; /* rivets ke left me */
+  }
+
+  /* SVG rope layer — stage size, behind clip, non-interactive */
+  .rope-layer {
+    position:absolute; inset:0;
+    z-index:2;
+    pointer-events:none;
+    overflow:visible;
+  }
+  /* thread par chhapa hua text — strap print jaisa */
+  .rope-text {
+    font: 700 6.5px/1 'Inter', system-ui, sans-serif;
+    letter-spacing:.02em;
+    fill:rgba(255,255,255,.62);
+    paint-order:stroke;
+    stroke:rgba(0,0,0,.55);
+    stroke-width:.6px;
+    text-transform:uppercase;
+  }
+
+  /* hang group — rope ka end point; yahin se card move karta hai */
+  .hang {
+    position:absolute;
+    top:0; left:0;
+    width:0;                        /* 0-width: children center me (x=0) */
+    display:flex; flex-direction:column; align-items:center;
+    transform-origin:0 0;           /* rope end = pivot */
+    will-change:transform;
+  }
+
+  /* metal ferrule — rope ka crimp end */
+  .ferrule {
+    width:24px; height:10px; flex:none;
+    position:relative; z-index:3;
+    border-radius:3px;
+    background-image:
+      var(--grain),
+      repeating-linear-gradient(0deg, rgba(255,255,255,.22) 0 1px, rgba(0,0,0,.10) 1px 2px, transparent 2px 3px),
+      linear-gradient(180deg,#fdfefe 0%,#d8dce2 28%,#8f949d 55%,#c6cad1 76%,#5e636c 100%);
+    background-blend-mode: overlay, normal, normal;
+    box-shadow:0 5px 9px rgba(0,0,0,.5), 0 1px 3px rgba(0,0,0,.4),
+               inset 0 1px 0 rgba(255,255,255,.85);
+  }
+  .ferrule::before,          /* crimp lines */
+  .ferrule::after {
+    content:""; position:absolute; top:2px; bottom:2px; width:1px;
+    background:linear-gradient(180deg, rgba(0,0,0,.55), rgba(0,0,0,.25));
+    box-shadow:1px 0 0 rgba(255,255,255,.5);
+  }
+  .ferrule::before { left:7px; }
+  .ferrule::after  { right:7px; }
+
+  /* lobster clasp — brushed steel */
+  .clasp {
+    width:18px; height:26px; flex:none;
+    position:relative; z-index:3;
+    border-radius:9px 9px 11px 11px / 11px 11px 13px 13px;
+    background-image:
+      var(--grain),
+      repeating-linear-gradient(90deg, rgba(255,255,255,.18) 0 1px, rgba(0,0,0,.10) 1px 2px, transparent 2px 4px),
+      linear-gradient(90deg, #4f545d 0%, #b9bec7 18%, #f4f6f9 38%, #cdd1d8 52%, #8b9099 70%, #d5d9df 86%, #565b64 100%);
+    background-blend-mode: overlay, normal, normal;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.9),
+      inset 0 -2px 3px rgba(0,0,0,.45),
+      0 6px 10px rgba(0,0,0,.45),
+      0 2px 4px rgba(0,0,0,.35);
+  }
+  .clasp::before {          /* swivel barrel band */
+    content:"";
+    position:absolute; left:1px; right:1px; top:9px; height:5px;
+    border-radius:2px;
+    background:linear-gradient(180deg,#3c4048 0%, #969ba4 40%, #e8ebef 60%, #5a5f68 100%);
+    box-shadow:inset 0 0 2px rgba(0,0,0,.6), 0 1px 1px rgba(255,255,255,.35);
+  }
+  .clasp::after {           /* gate (lock slit) */
+    content:"";
+    position:absolute; right:2.5px; top:3px; width:4px; height:11px;
+    border-radius:3px;
+    background:linear-gradient(180deg, rgba(0,0,0,.65), rgba(0,0,0,.25));
+    box-shadow:inset 0 1px 1px rgba(0,0,0,.8), -1px 0 0 rgba(255,255,255,.35);
+  }
+
+  .ring {                    /* brushed-steel split ring */
+    width:36px; height:36px; flex:none;
+    margin-top:-7px;             /* clasp me hook hota hai */
+    margin-bottom:-17px;
+    border-radius:50%;
+    border:none;
+    background:var(--steel);
+    background-image:var(--grain), var(--steel);
+    background-blend-mode:overlay, normal;
+    -webkit-mask:radial-gradient(closest-side, transparent 0 56%, #000 58%);
+    mask:radial-gradient(closest-side, transparent 0 56%, #000 58%);
+    filter:drop-shadow(0 3px 4px rgba(0,0,0,.38));
+    position:relative;
+    z-index:2;
+  }
+  .ring::after {             /* split-ring joint line */
+    content:"";
+    position:absolute; left:50%; top:1px;
+    width:2px; height:8px;
+    transform:translateX(-50%) rotate(18deg);
+    background:linear-gradient(180deg, rgba(0,0,0,.7), rgba(0,0,0,.15));
+    border-right:1px solid rgba(255,255,255,.55);
+  }
+
+  /* ---------- The card ---------- */
+  .card-scene {
+    width:236px; height:348px;
+    perspective:1400px;
+    flex:none;
+    position:relative;
+    z-index:1;
+    filter: drop-shadow(0 34px 34px rgba(14,16,24,.42))
+            drop-shadow(0 12px 16px rgba(14,16,24,.30))
+            drop-shadow(0 3px 4px rgba(14,16,24,.22));
+  }
+  .card {
+    width:100%; height:100%;
+    position:relative;
+    transform-style:preserve-3d;
+    transition:transform .8s cubic-bezier(.22,.9,.25,1);
+    cursor:pointer;
+  }
+  .card.flipped { transform:rotateY(180deg); }
+  .face {
+    position:absolute; inset:0;
+    border-radius:18px;
+    backface-visibility:hidden;
+    -webkit-backface-visibility:hidden;
+    overflow:hidden;
+    padding:24px 22px 20px;
+    display:flex; flex-direction:column;
+  }
+  /* ---------- FRONT ---------- */
+  .front {
+    background:
+      radial-gradient(140% 90% at 20% 0%, #2c2e34 0%, #17181c 48%, #101114 100%);
+    color:#fff;
+    border:1px solid rgba(255,255,255,.07);
+  }
+  .front::after { /* glossy sweep */
+    content:"";
+    position:absolute; inset:0;
+    background:linear-gradient(115deg, rgba(255,255,255,.10) 0%, rgba(255,255,255,0) 32%, rgba(255,255,255,0) 66%, rgba(255,255,255,.05) 100%);
+    pointer-events:none;
+  }
+  .brand-row { display:flex; align-items:center; justify-content:space-between; }
+  .logo { font-size:24px; font-weight:800; letter-spacing:-.5px; }
+  .chip {
+    font-size:8.5px; letter-spacing:.16em; font-weight:600;
+    background:rgba(255,255,255,.1);
+    border:1px solid rgba(255,255,255,.14);
+    color:#d7d9de;
+    padding:5px 9px; border-radius:999px;
+    text-transform:uppercase;
+  }
+  .qr-wrap {
+    margin:26px auto 8px;
+    width:172px; height:172px;
+    background:#fff;
+    border-radius:14px;
+    padding:12px;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 8px 22px rgba(0,0,0,.45);
+  }
+  .qr { width:100%; height:100%; display:block; }
+  .scan-label {
+    text-align:center;
+    font-size:9px; letter-spacing:.22em; color:#9ba0ab;
+    margin-bottom:auto;
+  }
+  .info-rows { display:flex; flex-direction:column; gap:7px; margin-top:14px; }
+  .info-row {
+    display:flex; justify-content:space-between; align-items:baseline;
+    background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.06);
+    border-radius:8px;
+    padding:7px 11px;
+    font-size:10.5px;
+  }
+  .info-row .k { color:#8b8f99; letter-spacing:.06em; }
+  .info-row .v { color:#e8eaee; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:10px; }
+  .barcode {
+    margin-top:14px; height:34px; width:100%;
+    background:repeating-linear-gradient(90deg,
+      #d9dce2 0 2px, transparent 2px 4px,
+      #d9dce2 4px 5px, transparent 5px 9px,
+      #d9dce2 9px 12px, transparent 12px 13px,
+      #d9dce2 13px 14px, transparent 14px 18px);
+    border-radius:2px;
+    opacity:.9;
+  }
+  .barcode-id {
+    text-align:center; font-size:8px; letter-spacing:.3em;
+    color:#7c808a; margin-top:6px;
+  }
+
+  /* ---------- BACK ---------- */
+  .back {
+    background:
+      radial-gradient(140% 90% at 80% 0%, #2c2e34 0%, #17181c 48%, #101114 100%);
+    color:#fff;
+    border:1px solid rgba(255,255,255,.07);
+    transform:rotateY(180deg);
+  }
+  .back .brand-row { margin-bottom:20px; }
+  .back .id { font-size:10px; color:#6f737d; font-family:ui-monospace,Menlo,monospace; }
+  .event {
+    font-size:13.5px; font-weight:700; line-height:1.45;
+    color:#e8eaee;
+  }
+  .event .date { font-weight:500; color:#c6c9d0; }
+  .hr { height:1px; background:rgba(255,255,255,.12); margin:16px 0 auto; }
+  .attendee { margin-top:auto; }
+  .attendee .name { font-size:14px; font-weight:700; }
+  .attendee .org { font-size:11px; color:#8b8f99; margin-top:2px; }
+  .attendee .role { font-size:30px; font-weight:800; letter-spacing:-.5px; margin-top:16px; line-height:1; }
+  .attendee .access { font-size:10.5px; letter-spacing:.28em; color:#b9bdc6; margin-top:5px; }
+  .back-foot {
+    display:flex; justify-content:space-between; align-items:flex-end;
+    margin-top:22px;
+    font-size:10.5px; color:#6f737d;
+  }
+  .back-foot .num { font-size:17px; font-weight:800; color:#e8eaee; }
+
+  /* ---------- Toolbar ---------- */
+  .toolbar {
+    position:relative;
+    height:64px;
+    background:#0e0e11;
+    border-top:1px solid rgba(255,255,255,.08);
+    display:flex; align-items:center; gap:8px;
+    padding:0 14px;
+    overflow-x:auto;
+    z-index:7;
+    scrollbar-width:none;
+  }
+  .toolbar::-webkit-scrollbar { display:none; }
+  .pill {
+    flex:none;
+    display:flex; align-items:center; gap:7px;
+    font-size:12.5px; font-weight:600;
+    color:#c9ccd3;
+    background:#1a1b20;
+    border:1px solid rgba(255,255,255,.09);
+    border-radius:999px;
+    padding:9px 15px;
+    cursor:pointer;
+    transition:.18s;
+  }
+  .pill small { font-weight:700; font-size:9.5px; letter-spacing:.04em; }
+  .pill:hover { background:#232429; }
+  .pill.on {
+    background:#f2f3f5; color:#111216; border-color:#f2f3f5;
+  }
+  .pill.on small { color:#5b5f6a; }
+  .pill.theme.on { background:#141519; color:#fff; border-color:#3a3d45; }
+  .pill.theme.on small { color:#8b8f99; }
+  .pill.sway {
+    background:#ff7a1a; border-color:#ff7a1a; color:#1a0e04;
+  }
+  .pill.sway.off { background:#1a1b20; border-color:rgba(255,255,255,.09); color:#c9ccd3; }
+  .pill .dot { width:8px; height:8px; border-radius:50%; background:#2ec27e; box-shadow:0 0 6px #2ec27e; }
+  .pill.sway.off .dot { background:#6f737d; box-shadow:none; }
+  .sep { flex:none; width:1px; height:26px; background:rgba(255,255,255,.1); margin:0 4px; }
+
+  @media (max-width:640px){
+    .title-band h1 { font-size:34px; }
+    .card-scene { width:206px; height:304px; }
+    .qr-wrap { width:148px; height:148px; }
+    .face { padding:20px 18px 16px; }
+    .attendee .role { font-size:26px; }
+  }
+  @media (max-height:820px){
+    .card-scene { width:196px; height:288px; }
+    .qr-wrap { width:136px; height:136px; margin-top:18px; }
+    .title-band { height:110px; }
+    .title-band h1 { font-size:32px; }
+    .stage { height:calc(100vh - 110px - 64px); }
+  }
+</style>
+</head>
+<body>
+
+  <div class="title-band">
+    <h1>Hanging<br><span>Card</span></h1>
+  </div>
+
+  <div class="stage" id="stage">
+    <button class="btn-motion" id="btnMotion">Shake: Allow</button>
+    <div class="tap-hint" id="tapHint">Tap on card to flip</div>
+
+    <!-- Rope: verlet thread — real thread jaisa bend / stretch / lag -->
+    <svg class="rope-layer" id="ropeLayer" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="weave" width="6" height="6" patternUnits="userSpaceOnUse">
+          <rect width="6" height="6" fill="#1b1d22"/>
+          <path d="M0 6L6 0M-1 1L1 -1M5 7L7 5" stroke="rgba(255,255,255,.12)" stroke-width="1.1"/>
+          <path d="M0 0L6 6M-1 5L1 7M5 -1L7 1" stroke="rgba(0,0,0,.55)" stroke-width="1.1"/>
+          <rect width="6" height="1" fill="rgba(255,255,255,.05)"/>
+        </pattern>
+        <filter id="ropeShadowF" x="-50%" y="-25%" width="200%" height="150%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="3.2"/>
+        </filter>
+      </defs>
+
+      <!-- thread ka shadow (alag path — asli rope ko kabhi affect nahi karega) -->
+      <path id="ropeShadowP" fill="none" stroke="rgba(12,13,19,.42)" stroke-width="19"
+            stroke-linecap="round" stroke-linejoin="round"
+            transform="translate(2.5, 7)" filter="url(#ropeShadowF)"/>
+
+      <!-- asli rope: koi filter nahi, 100% crisp render -->
+      <path id="ropeOutline" fill="none" stroke="#07080a" stroke-width="19"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="ropeBody" fill="none" stroke="url(#weave)" stroke-width="16"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="ropeStitch" fill="none" stroke="rgba(255,255,255,.13)" stroke-width="2.5"
+            stroke-dasharray="5 7" stroke-linecap="round"/>
+      <!-- thread par printed text — rope ke bend ke saath chalta hai (textPath) -->
+      <path id="ropeTextPath" fill="none" stroke="none"/>
+      <text class="rope-text" id="ropeText" text-anchor="middle" startOffset="50%">
+        <textPath id="ropeTextInner" href="#ropeTextPath" xlink:href="#ropeTextPath" startOffset="50%" text-anchor="middle">HANGING CARD</textPath>
+      </text>
+    </svg>
+
+    <!-- pivot: rail par fixed anchor (clip) + rope ka end (hang) -->
+    <div class="pivot" id="pivot">
+      <div class="anchor">
+        <div class="clip"><span class="clip-text">twnty.hanging.card</span></div>
+      </div>
+
+      <!-- hang: rope ke end par latakta hai — angle a2 -->
+      <div class="hang" id="hang">
+        <div class="ferrule"></div>
+        <div class="clasp"></div>
+        <div class="ring"></div>
+
+        <div class="card-scene">
+          <div class="card" id="card">
+            <!-- FRONT -->
+            <div class="face front">
+              <div class="brand-row">
+                <div class="logo">twnty.</div>
+                <div class="chip">Stage Credential</div>
+              </div>
+
+              <div class="qr-wrap">
+                <svg class="qr" id="qr" viewBox="0 0 29 29" shape-rendering="crispEdges"></svg>
+              </div>
+              <div class="scan-label">SCAN FOR STAGE ACCESS</div>
+
+              <div class="info-rows">
+                <div class="info-row"><span class="k">WIFI:</span><span class="v">TWNTY_SPEAKER</span></div>
+                <div class="info-row"><span class="k">KEY:</span><span class="v">digital2019*stage</span></div>
+                <div class="info-row"><span class="k">LOUNGE:</span><span class="v">HALL 4 • LEVEL 2</span></div>
+              </div>
+
+              <div class="barcode"></div>
+              <div class="barcode-id">THW-2019-DBD-464238</div>
+            </div>
+
+            <!-- BACK -->
+            <div class="face back">
+              <div class="brand-row">
+                <div class="logo">twnty.</div>
+                <div class="id">ID +1137</div>
+              </div>
+
+              <div class="event">
+                10th International<br>
+                Digital Business Days 2019<br>
+                <span class="date">13. – 15. November</span>
+              </div>
+
+              <div class="hr"></div>
+
+              <div class="attendee">
+                <div class="name">Dr. Evelyn Vance</div>
+                <div class="org">Quantum Studio</div>
+                <div class="role">Speaker</div>
+                <div class="access">STAGE ACCESS</div>
+              </div>
+
+              <div class="back-foot">
+                <span>twnty.de</span>
+                <span class="num">1.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <button class="pill theme on" data-theme="obsidian">Obsidian</button>
+    <button class="pill theme" data-theme="vip">VIP Pass<small>Holo</small></button>
+    <button class="pill theme" data-theme="backstage">Backstage<small>Neon</small></button>
+    <button class="pill theme" data-theme="press">Press Media<small>Titanium</small></button>
+    <div class="sep"></div>
+    <button class="pill" id="btnSingle">⛶ Single</button>
+    <button class="pill" id="btnFlip">⟳ Flip Back</button>
+    <button class="pill sway" id="btnSway"><span class="dot"></span>⚡ Sway</button>
+    <div class="sep"></div>
+    <button class="pill" id="btnCustomize">✦ Customize</button>
+  </div>
+
+<script>
+/* ============================================================
+   QR-style pattern generator (decorative, deterministic)
+   ============================================================ */
+(function drawQR(){
+  const N = 29, svg = document.getElementById('qr');
+  const cell = [];
+  for (let y=0;y<N;y++){ cell[y]=[]; for(let x=0;x<N;x++) cell[y][x]=0; }
+
+  let seed = 20191113;
+  const rnd = () => (seed = (seed*1664525+1013904223)>>>0) / 4294967296;
+
+  function finder(ox,oy){
+    for(let y=0;y<7;y++) for(let x=0;x<7;x++){
+      const edge = (x===0||x===6||y===0||y===6);
+      const core = (x>=2&&x<=4&&y>=2&&y<=4);
+      cell[oy+y][ox+x] = (edge||core)?1:0;
+    }
+  }
+  finder(0,0); finder(N-7,0); finder(0,N-7);
+
+  for(let i=8;i<N-8;i++){ cell[6][i]= i%2===0?1:0; cell[i][6]= i%2===0?1:0; }
+
+  (function align(ox,oy){
+    for(let y=0;y<5;y++) for(let x=0;x<5;x++){
+      const edge=(x===0||x===4||y===0||y===4);
+      const core=(x===2&&y===2);
+      cell[oy+y][ox+x]=(edge||core)?1:0;
+    }
+  })(N-9,N-9);
+
+  const reserved = (x,y)=>{
+    if(x<8&&y<8) return true;
+    if(x>=N-8&&y<8) return true;
+    if(x<8&&y>=N-8) return true;
+    if(x===6||y===6) return true;
+    if(x>=N-9&&x<=N-5&&y>=N-9&&y<=N-5) return true;
+    return false;
+  };
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    if(!reserved(x,y)) cell[y][x] = rnd()>0.5?1:0;
+  }
+
+  let d='';
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++)
+    if(cell[y][x]) d += `M${x} ${y}h1v1h-1z`;
+  svg.innerHTML = `<path d="${d}" fill="#0b0b0d"/>`;
+})();
+
+/* ============================================================
+   Flexible verlet rope + pendulum card
+   - Rope top (A) clip ke neeche FIXED hai.
+   - Rope 11 verlet points ka chain hai → bend, stretch, wave,
+     lag — bilkul real thread jaisa.
+   - Card ka hang-point P rope ke END par hota hai; rope ke
+     beech ke points apni inertia se peeche reh kar curve bante hain.
+   - Card rotation sirf halka (clamped ±23°).
+   ============================================================ */
+const stage      = document.getElementById('stage');
+const pivot      = document.getElementById('pivot');
+const hang       = document.getElementById('hang');
+const card       = document.getElementById('card');
+const ropeLayer  = document.getElementById('ropeLayer');
+const ropeOutline= document.getElementById('ropeOutline');
+const ropeBody   = document.getElementById('ropeBody');
+const ropeStitch = document.getElementById('ropeStitch');
+const ropeTextPath = document.getElementById('ropeTextPath');
+const ropeShadowP  = document.getElementById('ropeShadowP');
+
+/* geometry (stage-local px) */
+const ANCHOR_OFF_Y = 70;     // clip bottom (pivot origin se)
+const ROPE_L       = 54;     // anchor → hang-point ki length (kam kiya gaya)
+const N            = 11;     // rope points (10 segments)
+const SEG          = ROPE_L / (N - 1);
+
+let stageW = 0, stageH = 0, stageL = 0, stageT = 0;
+
+/* card pendulum (angle from vertical) */
+let a2 = 0, v2 = 0;
+let swayOn = true;
+let dragging = false;
+let downTarget = null;
+let lastT = performance.now();
+
+/* ---- event-driven motion: sirf touch/shake par chalega, phir ruk jaayega ---- */
+let awake   = false;    // abhi motion chal raha hai?
+let awakeT  = 0;        // kitni der se chal raha hai (max cap)
+let restT   = 0;        // kitni der se almost-still hai
+let sleepT  = 0;        // sleep ke baad still-ease timer
+const MAX_SWING_T = 3.4;   // iss se zyada der kabhi nahi chalega
+const REST_EPS    = 0.02;  // speed jiss se kam = almost still
+const REST_T      = 0.45;  // itni der still raha to so jaao
+
+/* ek swing impulse do — yahin se har motion shuru hota hai */
+function wake(imp, cause){
+  if(cause === 'shake' && !swayOn) return;   // shake respect karta hai Sway toggle
+  awake  = true;
+  awakeT = 0;
+  restT  = 0;
+  sleepT = 0;
+  if(typeof imp === 'number') v2 = clamp(v2 + imp, -THROW);
+}
+function sleep(){ awake = false; awakeT = 0; restT = 0; sleepT = 0; v2 = 0; }
+
+const MAX_C = 0.40;       // card ≈ ±23° — sirf halka rotation
+const GRAV  = 6.5;        // pendulum restoring force
+const DAMP  = 0.996;      // air friction (card)
+const THROW = 7;
+const clamp = (v,m)=> Math.max(-m, Math.min(m, v));
+
+/* ---- rope chain ---- */
+const pts = [];           // {x,y,px,py} stage-local
+function initRope(){
+  pts.length = 0;
+  const ax = stageW/2, ay = ANCHOR_OFF_Y - 6;   // pivot top = -6
+  for(let i=0;i<N;i++){
+    pts.push({ x:ax, y:ay + i*SEG, px:ax, py:ay + i*SEG });
+  }
+}
+
+function measure(){
+  const r = stage.getBoundingClientRect();
+  stageW = r.width; stageH = r.height;
+  stageL = r.left;  stageT = r.top;
+  ropeLayer.setAttribute('width',  stageW);
+  ropeLayer.setAttribute('height', stageH);
+  initRope();
+}
+
+/* smooth quadratic path through points */
+function smoothPath(p){
+  let d = `M${p[0].x.toFixed(2)} ${p[0].y.toFixed(2)}`;
+  for(let i=1;i<p.length-1;i++){
+    const mx = (p[i].x + p[i+1].x)/2, my = (p[i].y + p[i+1].y)/2;
+    d += `Q${p[i].x.toFixed(2)} ${p[i].y.toFixed(2)} ${mx.toFixed(2)} ${my.toFixed(2)}`;
+  }
+  const L = p[p.length-1];
+  d += `L${L.x.toFixed(2)} ${L.y.toFixed(2)}`;
+  return d;
+}
+
+/* verlet step: top pinned, bottom driven by card point P */
+function stepRope(P, dt){
+  const g = 1100 * dt * dt;      // gravity (px/frame²) — halka sag
+  const damp = 0.96;             // air drag → waves jaldi die
+
+  // integrate middle points (0 aur N-1 driven/pinned)
+  for(let i=1;i<N-1;i++){
+    const p = pts[i];
+    const vx = (p.x - p.px) * damp;
+    const vy = (p.y - p.py) * damp;
+    p.px = p.x; p.py = p.y;
+    p.x += vx;
+    p.y += vy + g;
+  }
+
+  // top pin (anchor)
+  pts[0].x = stageW/2; pts[0].y = ANCHOR_OFF_Y - 6;
+  pts[0].px = pts[0].x; pts[0].py = pts[0].y;
+
+  // bottom = card ka hang point (kinematic) — tight follow (kam whip)
+  const prevEnd = { x: pts[N-1].x, y: pts[N-1].y };
+  pts[N-1].x = P.x; pts[N-1].y = P.y;
+  pts[N-1].px = P.x - (P.x - prevEnd.x) * 0.86;
+  pts[N-1].py = P.y - (P.y - prevEnd.y) * 0.86;
+
+  /* bend stiffness gradient:
+     metal (top) ke paas rope STIFF/seedha — beech me hi flex ho.
+     i=1..9 ke liye weights: top high → middle low → bottom medium */
+  const BEND_W = [0, .85, .60, .28, .10, .05, .05, .12, .34, .55, 0];
+
+  // distance constraints + straighten (bend) constraints
+  const k = 0.97;                // near-inextensible = kam stretch
+  for(let it=0; it<6; it++){
+    for(let i=0;i<N-1;i++){
+      const a = pts[i], b = pts[i+1];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let d = Math.hypot(dx, dy) || 0.0001;
+      const diff = ((d - SEG) / d) * k;
+      const ox = dx * diff, oy = dy * diff;
+      if(i === 0){                     // top fixed → sirf niche move
+        b.x -= ox; b.y -= oy;
+      } else if(i === N-2){            // bottom driven → sirf upar move
+        a.x += ox; a.y += oy;
+      } else {
+        a.x += ox * 0.5; a.y += oy * 0.5;
+        b.x -= ox * 0.5; b.y -= oy * 0.5;
+      }
+    }
+    /* straighten: point i ko (i-1,i+1) ke midpoint ki taraf kheencho.
+       Top par zyada force → metal ke paas seedha;
+       beech me kam → wahin bend karega. */
+    for(let i=1;i<N-1;i++){
+      const w = BEND_W[i] * 0.5;
+      if(w <= 0) continue;
+      const a = pts[i-1], b = pts[i], c = pts[i+1];
+      b.x += ((a.x + c.x)/2 - b.x) * w;
+      b.y += ((a.y + c.y)/2 - b.y) * w;
+    }
+  }
+}
+
+/* ---------- Drag (gentle) ---------- */
+stage.addEventListener('pointerdown', e=>{
+  if (e.target.closest('.btn-motion,.tap-hint')) return;
+  dragging = true;
+  downTarget = e.target;
+  stage._start = {x:e.clientX, y:e.clientY};
+  stage._pt = performance.now();
+  stage._pa = a2;
+  stage.classList.add('dragging');
+  stage.setPointerCapture(e.pointerId);
+});
+
+stage.addEventListener('pointermove', e=>{
+  if(!dragging) return;
+  const ax = stageL + stageW/2, ay = stageT + (ANCHOR_OFF_Y - 6);
+  const raw = Math.atan2(e.clientX - ax, e.clientY - ay);
+
+  const t2 = clamp(raw, MAX_C);       // sirf halka
+  const now = performance.now();
+  const dt = Math.max(0.016, (now - stage._pt)/1000);
+  v2 = (t2 - a2)/dt * 0.85;
+  a2 = t2;
+  stage._pt = now;
+});
+
+function endDrag(e){
+  if(!dragging) return;
+  dragging = false;
+  stage.classList.remove('dragging');
+
+  /* tap = card par press + kam hilana → flip */
+  const start = stage._start;
+  const dist = (e && start) ? Math.hypot(e.clientX-start.x, e.clientY-start.y) : 999;
+  const isTap = dist < 9 && downTarget && card.contains(downTarget);
+
+  v2 = clamp(v2, -THROW);
+  if (isTap){ toggleFlip(); wake(1.15); killTapHint(); }   // tap = flip + swing + hint gayab
+  else      { wake(); }                     // release = throw velocity se swing, phir rukega
+
+  downTarget = null; stage._start = null;
+}
+stage.addEventListener('pointerup', endDrag);
+stage.addEventListener('pointercancel', endDrag);
+
+function toggleFlip(){ card.classList.toggle('flipped'); }
+
+/* ---------- Main loop ---------- */
+function frame(now){
+  const dt = Math.min(0.05,(now - lastT)/1000); lastT = now;
+
+  if(dragging){
+    awake = true; awakeT = 0; restT = 0; sleepT = 0;   // drag = always active
+  } else if(awake){
+    /* normal pendulum physics — sirf jab tak "awake" hai */
+    v2 += -GRAV * Math.sin(a2) * dt;
+    v2 *= Math.pow(DAMP, dt*60);
+    a2 += v2 * dt;
+
+    if (a2 >  MAX_C){ a2 =  MAX_C; if(v2>0) v2 = -v2*0.25; }
+    if (a2 < -MAX_C){ a2 = -MAX_C; if(v2<0) v2 = -v2*0.25; }
+
+    awakeT += dt;
+    /* almost still? → timer badhao, warna reset */
+    if(Math.abs(v2) < REST_EPS && Math.abs(a2) < 0.02) restT += dt; else restT = 0;
+
+    /* stop conditions: settle ho gaya, ya max time nikal gaya */
+    if(restT > REST_T || awakeT > MAX_SWING_T){ sleep(); }
+  } else {
+    /* SO GAYA — dead still: a2 ko smoothly 0 par le jao, phir bilkul freeze */
+    if(a2 !== 0){
+      sleepT += dt;
+      a2 += (0 - a2) * Math.min(1, dt * 6.5);
+      v2 = 0;
+      if(Math.abs(a2) < 0.0015 || sleepT > 0.6){ a2 = 0; }
+    }
+    v2 = 0;
+  }
+
+  /* card ka hang point P (anchor + rope length, clamped angle) */
+  const px = stageW/2 + ROPE_L * Math.sin(a2);
+  const py = (ANCHOR_OFF_Y - 6) + ROPE_L * Math.cos(a2);
+
+  stepRope({x:px, y:py}, dt);
+
+  const d = smoothPath(pts);
+  ropeShadowP.setAttribute('d', d);       // shadow pehle
+  ropeOutline.setAttribute('d', d);
+  ropeBody.setAttribute('d', d);
+  ropeStitch.setAttribute('d', d);
+  ropeTextPath.setAttribute('d', d);      // text bhi thread ke saath bend hoga
+
+  /* hang group: pivot-local coords me rope end + card angle */
+  const hx = ROPE_L * Math.sin(a2);
+  const hy = ANCHOR_OFF_Y + ROPE_L * Math.cos(a2);
+  hang.style.transform = `translate(${hx.toFixed(2)}px, ${hy.toFixed(2)}px) rotate(${a2.toFixed(4)}rad)`;
+
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize', measure);
+measure();
+requestAnimationFrame(frame);
+
+/* ============================================================
+   Toolbar
+   ============================================================ */
+document.getElementById('btnFlip').addEventListener('click', toggleFlip);
+
+const btnSway = document.getElementById('btnSway');
+btnSway.addEventListener('click', ()=>{
+  swayOn = !swayOn;
+  btnSway.classList.toggle('off', !swayOn);
+  if(swayOn){ wake(1.1); }                 // on → ek demo swing
+  else      { sleep();   }                 // off → turant freeze
+});
+
+document.getElementById('btnSingle').addEventListener('click', ()=>{
+  wake(1.6);
+});
+
+document.getElementById('btnCustomize').addEventListener('click', ()=>{
+  const name = prompt('Card name:', document.querySelector('.attendee .name').textContent);
+  if(name) document.querySelector('.attendee .name').textContent = name;
+  const role = prompt('Role (e.g. Speaker, VIP, Press):', document.querySelector('.attendee .role').textContent);
+  if(role) document.querySelector('.attendee .role').textContent = role.toUpperCase();
+});
+
+/* themes */
+const themes = {
+  obsidian:   { front:'radial-gradient(140% 90% at 20% 0%, #2c2e34 0%, #17181c 48%, #101114 100%)',
+                back:'radial-gradient(140% 90% at 80% 0%, #2c2e34 0%, #17181c 48%, #101114 100%)' },
+  vip:        { front:'linear-gradient(145deg,#3b2f63 0%,#241d40 45%,#141225 100%)',
+                back:'linear-gradient(145deg,#241d40 0%,#191533 50%,#100e20 100%)' },
+  backstage:  { front:'linear-gradient(145deg,#07352c 0%,#052620 48%,#021512 100%)',
+                back:'linear-gradient(145deg,#052620 0%,#041d18 50%,#02110e 100%)' },
+  press:      { front:'linear-gradient(145deg,#d9dce2 0%,#b9bdc6 50%,#8f939d 100%)',
+                back:'linear-gradient(145deg,#c8ccd3 0%,#a9adb6 50%,#83878f 100%)' }
+};
+document.querySelectorAll('.pill.theme').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.pill.theme').forEach(b=>b.classList.remove('on'));
+    btn.classList.add('on');
+    const t = themes[btn.dataset.theme];
+    document.querySelector('.front').style.background = t.front;
+    document.querySelector('.back').style.background  = t.back;
+    const light = btn.dataset.theme === 'press';
+    document.querySelectorAll('.face').forEach(f=>{
+      f.style.color = light ? '#14151a' : '#fff';
+    });
+    document.querySelector('.back .hr').style.background = light ? 'rgba(0,0,0,.18)' : 'rgba(255,255,255,.12)';
+    wake(0.8);
+  });
+});
+
+/* ---------- Mobile movement → motion  (DeviceMotion + DeviceOrientation) ----------
+   Do raste use karte hain, taaki "hilana" har tarah se pakda jaaye:
+   1) ACCELEROMETER  — jhatka / shake (aage-peeche, upar-neeche)
+   2) TILT (gyro)    — phone ko left/right ya aage jhukana
+   Dono se sirf EK impulse milta hai (wake), baaki physics wahi purani. */
+
+const ACC_DELTA   = 2.6;    // sensitivity: chhota jerk bhi pakda jaaye
+const TILT_DELTA  = 0.55;   // degrees — itna tilt badla to motion
+const SHAKE_COOL  = 0.10;   // impulses ke beech minimum gap (sec)
+let lastMag = 9.81, shakeCool = 0;
+let lastGamma = null, lastBeta = null;
+
+/* ---- 1) accelerometer: shake / jhatka ---- */
+function onMotion(e){
+  const a = e.accelerationIncludingGravity || e.acceleration;
+  if(!a) return;
+
+  const mag = Math.hypot(a.x || 0, a.y || 0, a.z || 0);
+  const jerk = Math.abs(mag - lastMag);
+  lastMag = mag;
+
+  if(shakeCool > 0 || jerk < ACC_DELTA) return;
+  shakeCool = SHAKE_COOL;
+
+  /* jerk jitna zor ka, swing utna bada — par ab kaafi halka */
+  const power = Math.min(0.85, 0.18 + (jerk - ACC_DELTA) * 0.035);
+  /* phone ek taraf jhatka → badge ulti taraf lag karta hai */
+  const dir = Math.sign(a.x || 0) || Math.sign(a.y || 0) || 1;
+  wake(-dir * power, 'shake');
+}
+
+/* ---- 2) tilt: phone jhukane par bhi swing ---- */
+function onOrient(e){
+  if(e.gamma === null || e.gamma === undefined) return;
+  const g = e.gamma;                 // left-right tilt (deg)
+  const b = e.beta || 0;             // aage-peeche tilt (deg)
+
+  if(lastGamma === null){ lastGamma = g; lastBeta = b; return; }
+  const dg = g - lastGamma, db = b - lastBeta;
+  lastGamma = g; lastBeta = b;
+
+  /* phone ki rotation ki speed (deg/frame) */
+  const move = Math.abs(dg) + Math.abs(db) * 0.6;
+  if(shakeCool > 0 || move < TILT_DELTA) return;
+  shakeCool = SHAKE_COOL;
+
+  /* jis taraf jhukao, badge ulti taraf (inertia) */
+  let imp = -(dg * 0.022 + db * 0.008);
+  imp = Math.max(-0.6, Math.min(0.6, imp));
+  if(Math.abs(imp) < 0.06) imp = (imp < 0 ? -0.06 : 0.06);
+  wake(imp, 'shake');
+}
+
+/* cooldown tick (chhota standalone timer) */
+setInterval(()=>{ shakeCool = Math.max(0, shakeCool - 0.05); }, 50);
+
+const btnMotion = document.getElementById('btnMotion');
+function listenMotion(){
+  window.addEventListener('devicemotion',     onMotion,  {passive:true});
+  window.addEventListener('deviceorientation', onOrient, {passive:true});
+}
+
+const needsPermission = (typeof DeviceMotionEvent !== 'undefined' &&
+                         typeof DeviceMotionEvent.requestPermission === 'function');
+
+if(needsPermission){
+  /* iOS (13+) — sensor sirf user tap ke baad chalta hai */
+  btnMotion.textContent = 'Shake: Allow';
+  btnMotion.classList.add('show');
+  btnMotion.addEventListener('click', async ()=>{
+    let ok = false;
+    try{
+      if(typeof DeviceMotionEvent !== 'undefined' &&
+         typeof DeviceMotionEvent.requestPermission === 'function'){
+        ok = (await DeviceMotionEvent.requestPermission()) === 'granted';
+      }
+      if(typeof DeviceOrientationEvent !== 'undefined' &&
+         typeof DeviceOrientationEvent.requestPermission === 'function'){
+        ok = ((await DeviceOrientationEvent.requestPermission()) === 'granted') || ok;
+      }
+    }catch(err){ ok = false; }
+
+    if(ok){
+      listenMotion();
+      showTapHint();                    // button ki jagah ab plain text
+    } else {
+      btnMotion.textContent = 'Motion: Blocked';
+      setTimeout(()=>btnMotion.classList.remove('show'), 1800);
+    }
+  });
+} else if(typeof DeviceMotionEvent !== 'undefined' || typeof DeviceOrientationEvent !== 'undefined'){
+  /* Android / Chrome — permission ki zarurat nahi */
+  listenMotion();
+}
+
+/* ---------- "Tap on card to flip" hint: sirf ek baar, phir hamesha gayab ---------- */
+const tapHint = document.getElementById('tapHint');
+let tapHintGone = false;          // tap karne ke baad dobara kabhi nahi aayega
+
+function showTapHint(){
+  if(tapHintGone) return;
+  if(needsPermission) btnMotion.classList.remove('show');   // button ki jagah
+  tapHint.classList.add('show');
+}
+function killTapHint(){
+  if(tapHintGone) return;
+  tapHintGone = true;
+  tapHint.classList.remove('show');
+  setTimeout(()=>tapHint.remove(), 500);
+}
+/* Android par: pehla sensor event aate hi hint dikha do */
+function onFirstSensor(){ showTapHint(); window.removeEventListener('devicemotion', onFirstSensor); }
+window.addEventListener('devicemotion', onFirstSensor, {passive:true});
+
+/* card ab shuru me bilkul still rehta hai — motion sirf touch/shake se */
+</script>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a41fe0ad9b242698',t:'MTc5MDU2ODQwOQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
